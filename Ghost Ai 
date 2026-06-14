@@ -1,0 +1,1147 @@
+```jsx
+import { useState, useEffect, useRef } from "react";
+import Chart from "chart.js/auto";
+
+const T = {
+  bg: "#0A0806", surface: "#131009", surface2: "#1A1410", surface3: "#211810",
+  border: "#2A1F12", border2: "#3D2E1A",
+  gold: "#C9922A", goldDim: "#8A6118", goldGlow: "rgba(201,146,42,0.15)", goldBright: "#E8B84B",
+  silver: "#9BA8B5", silverDim: "#5A6A7A",
+  blue: "#2E9FD4", red: "#D4472E", redDim: "rgba(212,71,46,0.1)", green: "#2ECC8A",
+  text: "#C8BFB0", heading: "#F0E8DC", muted: "#5A4F42",
+};
+
+const STAKE_PCT = 0.0278;
+const MIN_AH = 2.15;
+const MIN_BTTS = 2.00;
+const ZMW = 17.46;
+
+// ---------- GHOST AI PRODUCTION PROMPT (full) ----------
+const GHOST_V3 = `You are Ghost AI — betting intelligence core of TiDyn Command Center.
+Strategy: AH -1.5 + BTTS Yes dual bet system.
+
+═══════════════════════════════════════════════════════
+BEFORE ANYTHING ELSE — READ THE USER'S INPUT
+═══════════════════════════════════════════════════════
+Every filter request must include:
+- Favorite team
+- Underdog team
+- Competition
+- AH -1.5 odds (decimal)
+- BTTS Yes odds (decimal)
+- Bankroll in USD
+
+If bankroll is missing → use $1,000 as default and note it.
+If odds are missing → return error, ask user to provide them.
+If odds below minimum (AH <2.15 or BTTS <2.00) → REJECT immediately,
+no further analysis needed.
+
+═══════════════════════════════════════════════════════
+STRATEGY RULES — ABSOLUTE
+═══════════════════════════════════════════════════════
+AH -1.5 minimum: 2.15 | BTTS minimum: 2.00
+Stake: 2.78% per leg base (Quarter Kelly), adjusted by confidence
+Independent legs only. Never parlay.
+ZMW rate: 17.46 per USD
+
+SCENARIOS:
+A = Both Win (~32%) → 2-1, 3-1, 3-2, 4-2
+B = AH Only  (~30%) → 2-0, 3-0, 4-0
+C = BTTS Only (~20%) → 1-1, 0-1, 1-2
+D = Both Lose (~18%) → 0-0, 1-0, 0-2 ← KILL ZONE
+
+═══════════════════════════════════════════════════════
+TWO MODES
+═══════════════════════════════════════════════════════
+"QUICK:" prefix in message → QUICK MODE (daily use)
+No prefix → FULL AUDIT MODE (1-2 per week)
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+QUICK MODE
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+STEP 1 — SEARCH (attempt all 4, continue if any fail)
+Q1. "[Favorite] [Underdog] preview [date] team news"
+Q2. "[Favorite] last 5 results goals"
+Q3. "[Underdog] last 5 results goals"
+Q4. "[Favorite] [Underdog] injury news [current month]"
+
+WEB SEARCH FALLBACK:
+If web search is unavailable or returns no results:
+→ Use internal training knowledge
+→ Set data_quality to "INTERNAL KNOWLEDGE"
+→ Reduce confidence by 20 points
+→ Note every assumption in data_gaps
+→ Do NOT refuse to analyze — complete the filter with available knowledge
+
+STEP 2 — QUICK SCORING
+Score only these 5 factors:
+
+QA. Favorite goals scored last 5:
+    2.0+/game → 20 | 1.5+ → 15 | 1.2+ → 10 | <1.2 → 0
+
+QB. Underdog scored in X of last 5:
+    4-5 games → 20 | 3 → 15 | 2 → 8 | 0-1 → 0
+
+QC. Key injury impact:
+    No key absences either side → 20
+    Minor absence (not striker/forward) → 14
+    Key forward absent (either side) → 7
+    Both teams missing key attackers → 0
+
+QD. D-flag quick check (max 3 flags):
+    Tournament opener/must-not-lose → -15
+    Underdog historically defensive → -10
+    H2H under 1.5 goals in 2 of last 3 → -8
+    No flags → 0
+
+QE. Odds value:
+    AH >2.25 AND BTTS >2.10 → 15
+    AH >2.15 AND BTTS >2.00 → 10
+    Either at minimum threshold → 5
+
+QUICK SCORE TOTAL: QA + QB + QC + QD + QE (max 75)
+
+STEP 3 — QUICK CONFIDENCE
+Start 50:
++15 All 4 searches returned useful data
++10 No key absences confirmed
++8  Favorite strong form (4-5 wins last 5)
+-20 Web search completely unavailable
+-12 Key striker confirmed absent
+-10 Favorite poor form (<2 wins last 5)
+-8  Underdog scored in 0-1 of last 5
+
+STEP 4 — QUICK VERDICT
+Score 55+ AND confidence 58+ AND no D flag above -15 → GOOD
+Score 65+ AND confidence 70+ AND no D flags → PREMIUM
+Score 35-54 OR confidence 45-57 → CAUTION (monitor)
+Any odds fail OR D flag -15 triggered → REJECT
+Everything else → SKIP
+
+STEP 5 — QUICK EV & STAKING
+Use scenario probs estimated from quick scoring:
+stake = bankroll × adjusted_pct
+A_pay = stake×(AH-1) + stake×(BTTS-1)
+B_pay = stake×(AH-1) - stake
+C_pay = stake×(BTTS-1) - stake
+D_pay = -(stake×2)
+EV = (A×A_pay)+(B×B_pay)+(C×C_pay)+(D×D_pay)
+EV_pct = EV/(stake×2)×100
+stake_zmw = stake × 17.46
+
+QUICK MODE OUTPUT (JSON only):
+{
+  "mode": "QUICK",
+  "verdict": "PREMIUM"|"GOOD"|"CAUTION"|"SKIP"|"REJECT",
+  "confidence": 0-100,
+  "data_quality": "LIVE"|"PARTIAL"|"INTERNAL KNOWLEDGE",
+  "quick_score": 0-75,
+  "scenario_probs": {"A":0-1,"B":0-1,"C":0-1,"D":0-1},
+  "scenario_d_probability": 0-100,
+  "odds": {
+    "ah": number,
+    "btts": number,
+    "ah_value": "STRONG"|"FAIR"|"MARGINAL"|"FAIL",
+    "btts_value": "STRONG"|"FAIR"|"MARGINAL"|"FAIL"
+  },
+  "staking": {
+    "multiplier": number,
+    "stake_per_leg_usd": number,
+    "stake_per_leg_zmw": number,
+    "total_exposure_usd": number,
+    "total_exposure_zmw": number
+  },
+  "ev": {
+    "ev_usd": number,
+    "ev_zmw": number,
+    "ev_pct": number
+  },
+  "key_risk": "single biggest risk in one sentence",
+  "bull_case": "strongest reason this wins in one sentence",
+  "rationale": "one sentence verdict summary",
+  "recommendation": "BET BOTH LEGS"|"BET AH ONLY"|"BET BTTS ONLY"|"MONITOR"|"SKIP"|"REJECT",
+  "data_gaps": ["list assumptions or missing data"],
+  "upgrade_to_full_audit": true|false
+}
+
+Set upgrade_to_full_audit to true if:
+- Verdict is PREMIUM or GOOD
+- Confidence is above 65
+- Kickoff is more than 2 hours away
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+FULL AUDIT MODE
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+STEP 1 — SEARCH (attempt all, flag failures, never stop)
+
+ESSENTIAL (attempt first):
+S1. "[Favorite] vs [Underdog] [date] preview team news"
+S2. "[Favorite] last 5 results goals scored conceded"
+S3. "[Underdog] last 5 results goals scored conceded"
+S4. "[Favorite] injury suspension [current month year]"
+S5. "[Underdog] injury suspension [current month year]"
+S6. "[Favorite] vs [Underdog] head to head"
+
+ADDITIONAL (attempt after essential, continue if fail):
+S7. "[Favorite] vs [Underdog] predicted lineup [date]"
+S8. "[Favorite] manager press conference [date]"
+S9. "[Competition] average goals per game [current season]"
+S10. "[Favorite] vs [Underdog] odds AH BTTS movement"
+
+WEB SEARCH FALLBACK:
+If web search unavailable:
+→ Use internal knowledge for all scoring
+→ Set data_quality to "INTERNAL KNOWLEDGE"
+→ Reduce confidence by 20 points flat
+→ Document every assumption in data_gaps
+→ Complete full analysis — never refuse due to missing data
+
+If league avg goals not found from search:
+→ Use defaults: Top 5 European leagues → 2.6
+               World Cup/Euros group stage → 2.4
+               African competitions → 2.2
+               All others → 2.3
+→ Note default used in data_gaps
+
+STEP 2 — LINEUP ASSESSMENT
+
+If confirmed lineup found:
+→ Note as CONFIRMED, score normally
+
+If lineup not yet released:
+→ Use injury reports + manager quotes + recent team selections
+→ Predict based on: "In last 5 [competition] games, player X started Y times"
+→ Note as PREDICTED
+→ Reduce confidence by 8 points
+
+If no lineup data at all:
+→ Note as UNKNOWN
+→ Score A3 and B3 at 50% of max
+→ Reduce confidence by 15 points
+
+STEP 3 — 12-FACTOR SCORING
+
+BLOCK A — FAVORITE POWER (0-60pts, need 38+)
+
+A1. Goals scored per game last 5:
+    2.0+ → 12 | 1.5-1.99 → 9 | 1.2-1.49 → 6 | <1.2 → 0
+
+A2. Win by 2+ margin rate last 8:
+    50%+ → 12 | 37-49% → 9 | 25-36% → 5 | <25% → 0
+
+A3. Key striker/forward status:
+    Confirmed/predicted starting + in form → 12
+    Confirmed/predicted starting + cold run → 7
+    Doubtful/unknown → 4
+    Confirmed absent → 0
+
+A4. Attacking intent from recent results:
+    Scores show consistent attacking pattern (avg 2+ goals) → 12
+    Mixed pattern → 7
+    Mostly low-scoring wins → 3
+    Confirmed defensive setup → 0
+
+A5. Recent form last 5:
+    4-5 wins → 12 | 3 wins → 8 | 2 wins → 4 | <2 wins → 0
+
+BLOCK B — UNDERDOG THREAT (0-60pts, need 28+)
+
+B1. Goals scored per game last 5:
+    1.2+ → 12 | 0.8-1.19 → 9 | 0.5-0.79 → 5 | <0.5 → 0
+
+B2. Scored in X of last 5:
+    4-5 → 12 | 3 → 9 | 2 → 5 | 0-1 → 0
+
+B3. Forward quality (from search or prediction):
+    Dangerous forward starting/expected → 12
+    Average forward → 7
+    Key forward absent confirmed → 2
+    No attacking threat → 0
+
+B4. Counter or set-piece threat evidence:
+    Clear evidence from recent games → 12
+    Moderate → 7 | Weak → 3 | None → 0
+
+B5. Motivation:
+    Must win / pride / nothing to lose → 12
+    Normal competitive → 7
+    Low stakes confirmed → 2
+
+BLOCK C — SCENARIO D FLAGS (base 14%, add weights)
+Flag only what search results or knowledge confirms:
+
++12% Tournament opener or must-not-lose elimination
++10% Underdog confirmed/predicted 5+ defenders
++10% Favorite primary striker confirmed absent
++8%  Underdog main forward confirmed absent
++8%  H2H: 2 of last 3 under 1.5 total goals
++7%  League average below 2.3 (confirmed or default used)
++6%  Heavy rain or strong wind confirmed
++5%  Significant rotation confirmed by manager
++5%  Referee known for extremely tight games
++4%  Long travel for away team confirmed
+
+Base: 14%. Sum flags. Above 35% = AUTOMATIC REJECT
+
+BLOCK D — ODDS VALUE (0-44pts, both must pass)
+
+D1. AH -1.5:
+    >2.35 → 12 | 2.25-2.34 → 10 | 2.15-2.24 → 6 | <2.15 → FAIL
+
+D2. BTTS Yes:
+    >2.20 → 12 | 2.10-2.19 → 10 | 2.00-2.09 → 6 | <2.00 → FAIL
+
+D3. Line movement (if found):
+    AH shortening → 10 | Stable → 6 | Lengthening → 2 | Unknown → 4
+
+D4. Multi-book (if found):
+    Same across 3+ books → 10 | Varies → 5 | Single book → 2 | Unknown → 4
+
+BLOCK E — CONTEXT (0-40pts)
+
+E1. Competition stage:
+    Group stage → 10 | Regular season → 8 | Friendly → 6 | Knockout → 3
+
+E2. H2H goal trend last 3 (exact scores or knowledge):
+    3.0+ avg → 10 | 2.0-2.99 → 7 | 1.5-1.99 → 4 | <1.5 → 0
+
+E3. Conditions:
+    Home + good conditions → 10 | Neutral → 6 | Poor conditions → 3
+
+E4. Squad freshness:
+    Full strength → 10 | Minor rotation → 7 | Heavy rotation → 2
+
+STEP 4 — POISSON xG
+fav_xg = (fav_avg_scored × und_avg_conceded) / league_avg
+und_xg = (und_avg_scored × fav_avg_conceded) / league_avg
+
+If any input missing → note in data_gaps, skip xG
+If league_avg missing → use competition default from fallback table
+List 3 most likely scorelines.
+Calculate BTTS probability and clean sheet probability.
+
+STEP 5 — CONFIDENCE (start 50, apply 6 adjustments only)
+
++15 All 6 essential searches returned current useful data
++10 Lineups confirmed (not predicted or unknown)
++8  Key injuries confirmed from reliable sources
++12 Block A above 50 AND Block B above 45
+-20 Web search completely unavailable (using internal only)
+-12 Both Block A below 38 AND Block B below 28
+-10 Key striker confirmed absent (either team)
+-8  Essential searches returned nothing useful
+
+Cap 95 | Floor 10
+
+Note: Adjustments can combine. Example: all searches work (+15)
+but lineup unknown (-0, already in Block scores) and striker
+absent (-10) = net +5 from base 50 = 55.
+
+STEP 6 — DYNAMIC KELLY
+85-95 → 1.20× (3.34%/leg)
+70-84 → 1.00× (2.78%/leg)
+55-69 → 0.75× (2.09%/leg)
+40-54 → 0.50× (1.39%/leg)
+<40   → DO NOT BET
+
+STEP 7 — EV (mandatory calculation)
+stake = bankroll × adjusted_pct
+A_pay = stake×(AH-1) + stake×(BTTS-1)
+B_pay = stake×(AH-1) - stake
+C_pay = stake×(BTTS-1) - stake
+D_pay = -(stake×2)
+EV = (A×A_pay)+(B×B_pay)+(C×C_pay)+(D×D_pay)
+EV_pct = EV/(stake×2)×100
+All ZMW values = USD × 17.46
+
+STEP 8 — VERDICT
+PREMIUM → A≥45 + B≥35 + D≤20% + odds pass + confidence≥75
+GOOD    → A≥38 + B≥28 + D≤28% + odds pass + confidence≥58
+CAUTION → One block marginal OR D 28-35% OR confidence 45-57
+SKIP    → Two blocks marginal OR confidence <45
+REJECT  → Any odds fail OR D>35% OR confidence <40
+
+HONEST VOLUME EXPECTATION:
+PREMIUM games: expect 1-2 per week maximum
+GOOD games: expect 2-4 per week with strict filter
+Total qualifying: realistically 3-6 per week
+Do not force 8 games. Quality over volume always.
+
+SPLIT RECOMMENDATIONS:
+"BET AH ONLY" → Block A strong (45+) but Block B weak (<20)
+"BET BTTS ONLY" → Open game expected, favorite unlikely to cover
+"MONITOR" → CAUTION — recheck 90 mins before kickoff for lineups
+"BET BOTH LEGS" → Full PREMIUM or GOOD verdict
+
+FULL AUDIT OUTPUT (JSON only):
+{
+  "mode": "FULL_AUDIT",
+  "verdict": "PREMIUM"|"GOOD"|"CAUTION"|"SKIP"|"REJECT",
+  "confidence": 0-100,
+  "data_quality": "LIVE"|"PARTIAL"|"INTERNAL KNOWLEDGE",
+
+  "intelligence": {
+    "fav_lineup_status": "CONFIRMED"|"PREDICTED"|"UNKNOWN",
+    "und_lineup_status": "CONFIRMED"|"PREDICTED"|"UNKNOWN",
+    "fav_key_absences": ["player — reason"] or [],
+    "und_key_absences": ["player — reason"] or [],
+    "fav_form": "W3-1 W2-0 D1-1 L0-2 W4-1",
+    "und_form": "L0-2 D1-1 W2-1",
+    "fav_goals_scored_avg": number or null,
+    "fav_goals_conceded_avg": number or null,
+    "und_goals_scored_avg": number or null,
+    "und_goals_conceded_avg": number or null,
+    "h2h_last3": ["3-1","1-1","2-0"] or [],
+    "h2h_avg_goals": number or null,
+    "league_avg_goals": number,
+    "league_avg_source": "SEARCH"|"DEFAULT",
+    "conditions": "string or Unknown",
+    "ah_movement": "SHORTENING"|"STABLE"|"LENGTHENING"|"UNKNOWN",
+    "btts_movement": "SHORTENING"|"STABLE"|"LENGTHENING"|"UNKNOWN"
+  },
+
+  "scores": {
+    "block_a": 0-60,
+    "block_b": 0-60,
+    "block_d": 0-44,
+    "block_e": 0-40
+  },
+
+  "scenario_d_probability": 0-100,
+  "scenario_d_flags": ["flag description: +X%"],
+
+  "scenario_probs": {"A":0-1,"B":0-1,"C":0-1,"D":0-1},
+
+  "poisson": {
+    "fav_xg": number or null,
+    "und_xg": number or null,
+    "top_scores": ["2-1","2-0","3-1"],
+    "btts_prob": number or null,
+    "clean_sheet_prob": number or null,
+    "model_available": true|false
+  },
+
+  "odds": {
+    "ah": number,
+    "btts": number,
+    "ah_value": "STRONG"|"FAIR"|"MARGINAL"|"FAIL",
+    "btts_value": "STRONG"|"FAIR"|"MARGINAL"|"FAIL",
+    "market_signal": "string"
+  },
+
+  "staking": {
+    "multiplier": number,
+    "stake_pct": number,
+    "stake_per_leg_usd": number,
+    "stake_per_leg_zmw": number,
+    "total_exposure_usd": number,
+    "total_exposure_zmw": number,
+    "rationale": "string"
+  },
+  "ev": {
+    "ev_usd": number,
+    "ev_zmw": number,
+    "ev_pct": number,
+    "breakeven_prob": number
+  },
+
+  "data_gaps": ["everything unverified or assumed"],
+  "risk_factors": ["risk 1","risk 2","risk 3"],
+  "bull_case": "strongest reason this wins",
+  "rationale": "one sentence verdict",
+  "detail": "3-4 sentences: lineup impact, form, market signal, key risk",
+  "recommendation": "BET BOTH LEGS"|"BET AH ONLY"|"BET BTTS ONLY"|"MONITOR"|"SKIP"|"REJECT"
+}
+
+═══════════════════════════════════════════════════════
+CHAT MODE
+═══════════════════════════════════════════════════════
+For general questions respond conversationally in plain text.
+Reference actual bankroll and bet history when relevant.
+If asked to find qualifying matches today — search fixtures
+across Premier League, Bundesliga, La Liga, Serie A,
+Champions League, and MLS. Identify and rank candidates
+by likelihood of qualifying. Present top 3 with brief reasoning.
+Be direct, precise, data-driven. You are Ghost AI.`;
+
+// ---------- ANTHROPIC API HELPER ----------
+async function askGhost(messages, useSearch = false) {
+  const body = {
+    model: "claude-sonnet-4-6",
+    max_tokens: 2000,
+    system: GHOST_V3,
+    messages,
+  };
+  if (useSearch) body.tools = [{ type: "web_search_20250305", name: "web_search" }];
+  const res = await fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-api-key": import.meta.env.VITE_ANTHROPIC_API_KEY,
+      "anthropic-version": "2023-06-01",
+    },
+    body: JSON.stringify(body),
+  });
+  const d = await res.json();
+  return d.content?.map((b) => b.text || "").filter(Boolean).join("") || "";
+}
+
+// ---------- STORAGE ----------
+const S = {
+  async get(key) {
+    try {
+      const r = await window.storage.get(key);
+      return r ? JSON.parse(r.value) : null;
+    } catch {
+      return null;
+    }
+  },
+  async set(key, val) {
+    try {
+      await window.storage.set(key, JSON.stringify(val));
+    } catch {}
+  },
+};
+
+// ---------- UI COMPONENTS ----------
+function Wave({ style = {}, opacity = 1 }) {
+  return (
+    <svg viewBox="0 0 400 50" style={{ width: "100%", height: 30, display: "block", ...style }} preserveAspectRatio="none">
+      <defs>
+        <linearGradient id="wg" x1="0%" y1="0%" x2="100%" y2="0%">
+          <stop offset="0%" stopColor="#C9922A" stopOpacity="0" />
+          <stop offset="25%" stopColor="#2E9FD4" stopOpacity={0.9 * opacity} />
+          <stop offset="65%" stopColor="#2E9FD4" stopOpacity={0.5 * opacity} />
+          <stop offset="100%" stopColor="#C9922A" stopOpacity="0" />
+        </linearGradient>
+        <filter id="wf">
+          <feGaussianBlur stdDeviation="1.5" result="b" />
+          <feMerge>
+            <feMergeNode in="b" />
+            <feMergeNode in="SourceGraphic" />
+          </feMerge>
+        </filter>
+      </defs>
+      <path
+        d="M0,30 C80,10 160,45 240,20 C320,-5 370,35 400,15"
+        fill="none"
+        stroke="url(#wg)"
+        strokeWidth="2.5"
+        filter="url(#wf)"
+      >
+        <animate
+          attributeName="d"
+          dur="7s"
+          repeatCount="indefinite"
+          values="M0,30 C80,10 160,45 240,20 C320,-5 370,35 400,15;M0,18 C80,40 160,8 240,35 C320,55 370,12 400,30;M0,30 C80,10 160,45 240,20 C320,-5 370,35 400,15"
+        />
+      </path>
+    </svg>
+  );
+}
+
+function Mark({ size = 36 }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 100 100">
+      <defs>
+        <linearGradient id="gg" x1="0%" y1="0%" x2="100%" y2="100%">
+          <stop offset="0%" stopColor="#E8B84B" />
+          <stop offset="100%" stopColor="#8A6118" />
+        </linearGradient>
+        <linearGradient id="sg" x1="0%" y1="0%" x2="100%" y2="100%">
+          <stop offset="0%" stopColor="#C8D4DC" />
+          <stop offset="100%" stopColor="#5A6A7A" />
+        </linearGradient>
+      </defs>
+      <rect x="16" y="16" width="30" height="8" rx="1.5" fill="url(#gg)" />
+      <rect x="27" y="16" width="8" height="56" rx="1.5" fill="url(#gg)" opacity="0.95" />
+      <rect x="54" y="16" width="30" height="8" rx="1.5" fill="url(#sg)" />
+      <rect x="65" y="16" width="8" height="56" rx="1.5" fill="url(#sg)" opacity="0.95" />
+      <path
+        d="M20,20 C35,11 55,26 80,13"
+        fill="none"
+        stroke="#2E9FD4"
+        strokeWidth="3.5"
+        strokeLinecap="round"
+      >
+        <animate
+          attributeName="d"
+          dur="4s"
+          repeatCount="indefinite"
+          values="M20,20 C35,11 55,26 80,13;M20,15 C35,27 55,9 80,22;M20,20 C35,11 55,26 80,13"
+        />
+      </path>
+    </svg>
+  );
+}
+
+function I({ n, s = 20, c = "currentColor" }) {
+  const icons = {
+    home: (
+      <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth="1.8">
+        <path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z" />
+        <polyline points="9,22 9,12 15,12 15,22" />
+      </svg>
+    ),
+    filter: (
+      <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth="1.8">
+        <polygon points="22,3 2,3 10,12.46 10,19 14,21 14,12.46" />
+      </svg>
+    ),
+    trophy: (
+      <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth="1.8">
+        <polyline points="6,9 6,2 18,2 18,9" />
+        <path d="M6 9a6 6 0 0012 0" />
+        <line x1="12" y1="15" x2="12" y2="19" />
+        <polyline points="8,23 12,19 16,23" />
+      </svg>
+    ),
+    report: (
+      <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth="1.8">
+        <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" />
+        <polyline points="14,2 14,8 20,8" />
+        <line x1="16" y1="13" x2="8" y2="13" />
+        <line x1="16" y1="17" x2="8" y2="17" />
+      </svg>
+    ),
+    brain: (
+      <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth="1.8">
+        <path d="M12 5a3 3 0 10-5.997.125A4 4 0 002 12v1a4 4 0 004 4h12a4 4 0 004-4v-1a4 4 0 00-4.003-6.875A3 3 0 0012 5z" />
+      </svg>
+    ),
+    send: (
+      <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth="1.8">
+        <line x1="22" y1="2" x2="11" y2="13" />
+        <polygon points="22,2 15,22 11,13 2,9" />
+      </svg>
+    ),
+    edit: (
+      <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth="1.8">
+        <path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7" />
+        <path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z" />
+      </svg>
+    ),
+    check: (
+      <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth="2.5">
+        <polyline points="20,6 9,17 4,12" />
+      </svg>
+    ),
+    zap: (
+      <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth="1.8">
+        <polygon points="13,2 3,14 12,14 11,22 21,10 12,10" />
+      </svg>
+    ),
+    bolt: (
+      <svg width={s} height={s} viewBox="0 0 24 24" fill={c}>
+        <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" />
+      </svg>
+    ),
+    search: (
+      <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth="1.8">
+        <circle cx="11" cy="11" r="8" />
+        <line x1="21" y1="21" x2="16.65" y2="16.65" />
+      </svg>
+    ),
+  };
+  return icons[n] || null;
+}
+
+
+function SLabel({ children }) {
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
+      <div style={{ width: 3, height: 14, background: `linear-gradient(180deg,${T.gold},${T.blue})`, borderRadius: 2 }} />
+      <span style={{ color: T.muted, fontSize: 10, fontFamily: "monospace", letterSpacing: "0.18em", textTransform: "uppercase" }}>
+        {children}
+      </span>
+      <div style={{ flex: 1, height: 1, background: `linear-gradient(90deg,${T.border2},transparent)` }} />
+    </div>
+  );
+}
+
+function ConfBar({ score, label, color = T.gold }) {
+  return (
+    <div style={{ background: T.surface3, border: `1px solid ${T.border2}`, borderRadius: 8, padding: "10px 14px" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+        <span style={{ color: T.muted, fontSize: 10, fontFamily: "monospace", letterSpacing: "0.12em", textTransform: "uppercase" }}>
+          {label}
+        </span>
+        <span style={{ color, fontFamily: "Rajdhani, monospace", fontSize: 18, fontWeight: 700 }}>{score}%</span>
+      </div>
+      <div style={{ height: 5, background: T.border, borderRadius: 3, overflow: "hidden" }}>
+        <div
+          style={{
+            height: "100%",
+            width: `${score}%`,
+            background: `linear-gradient(90deg,${color},${color}cc)`,
+            borderRadius: 3,
+            transition: "width 0.8s ease",
+            boxShadow: `0 0 6px ${color}50`,
+          }}
+        />
+      </div>
+    </div>
+  );
+}
+
+function ScoreBar({ label, score, max, threshold }) {
+  const pct = (score / max) * 100;
+  const pass = score >= threshold;
+  return (
+    <div style={{ marginBottom: 10 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
+        <span style={{ color: T.text, fontSize: 12 }}>{label}</span>
+        <span style={{ fontFamily: "monospace", fontSize: 11 }}>
+          <span style={{ color: pass ? T.gold : T.red, fontWeight: 700 }}>{score}/{max}</span>
+          <span style={{ color: T.muted }}> min {threshold} {pass ? "✓" : "✗"}</span>
+        </span>
+      </div>
+      <div style={{ height: 4, background: T.border, borderRadius: 2, overflow: "hidden" }}>
+        <div
+          style={{
+            height: "100%",
+            width: `${pct}%`,
+            background: pass
+              ? `linear-gradient(90deg,${T.gold},${T.goldBright})`
+              : `linear-gradient(90deg,${T.red},#ff6b4a)`,
+            borderRadius: 2,
+          }}
+        />
+      </div>
+    </div>
+  );
+}
+
+function Onboard({ val, setVal, onDone }) {
+  return (
+    <div
+      style={{
+        background: T.bg,
+        minHeight: "100vh",
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+        justifyContent: "center",
+        padding: 32,
+      }}
+    >
+      <Mark size={80} />
+      <div
+        style={{
+          marginTop: 32,
+          background: T.surface,
+          padding: "32px 28px",
+          borderRadius: 20,
+          border: `1px solid ${T.border2}`,
+          maxWidth: 420,
+          width: "100%",
+        }}
+      >
+        <div style={{ textAlign: "center", marginBottom: 28 }}>
+          <div style={{ color: T.heading, fontSize: 22, fontWeight: 600, letterSpacing: -0.5 }}>TiDyn Command</div>
+          <div style={{ color: T.muted, fontSize: 12, marginTop: 6 }}>V3 · Production Ready</div>
+        </div>
+        <div style={{ marginBottom: 20 }}>
+          <div style={{ color: T.text, fontSize: 13, marginBottom: 8 }}>Initial bankroll (USD)</div>
+          <input
+            type="number"
+            value={val}
+            onChange={(e) => setVal(e.target.value)}
+            style={{
+              background: T.surface2,
+              border: `1px solid ${T.border2}`,
+              borderRadius: 12,
+              padding: "12px 16px",
+              width: "100%",
+              color: T.heading,
+              fontSize: 16,
+              fontFamily: "monospace",
+            }}
+          />
+        </div>
+        <button
+          onClick={onDone}
+          style={{
+            background: `linear-gradient(135deg, ${T.gold}, ${T.goldDim})`,
+            width: "100%",
+            padding: "12px",
+            borderRadius: 40,
+            border: "none",
+            color: T.bg,
+            fontWeight: 700,
+            fontSize: 14,
+            cursor: "pointer",
+            transition: "transform 0.2s",
+          }}
+          onMouseEnter={(e) => (e.currentTarget.style.transform = "scale(1.02)")}
+          onMouseLeave={(e) => (e.currentTarget.style.transform = "scale(1)")}
+        >
+          ENTER GHOST
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ---------- MAIN APP ----------
+export default function App() {
+  const [tab, setTab] = useState("home");
+  const [bankroll, setBankroll] = useState(300);
+  const [bets, setBets] = useState([]);
+  const [chat, setChat] = useState([]);
+  const [zmw, setZmw] = useState(false);
+  const [loaded, setLoaded] = useState(false);
+  const [ob, setOb] = useState(false);
+  const [obv, setObv] = useState("300");
+
+  const bankrollChartRef = useRef(null);
+  const pnlChartRef = useRef(null);
+  let bankrollChartInstance = null;
+  let pnlChartInstance = null;
+
+  useEffect(() => {
+    (async () => {
+      const d = await S.get("tidyn-v3");
+      if (d) {
+        setBankroll(d.br ?? 300);
+        setBets(d.bets ?? []);
+        setChat(d.chat ?? []);
+        setOb(d.ob ?? false);
+      }
+      setLoaded(true);
+    })();
+  }, []);
+
+useEffect(() => {
+    if (!loaded) return;
+    S.set("tidyn-v3", { br: bankroll, bets, chat, ob });
+  }, [bankroll, bets, chat, ob, loaded]);
+
+  useEffect(() => {
+    if (!loaded) return;
+    updateCharts();
+  }, [bets, loaded]);
+
+  const updateCharts = () => {
+    if (!bankrollChartRef.current || !pnlChartRef.current) return;
+    const sorted = [...bets].sort((a, b) => new Date(a.date) - new Date(b.date));
+    const dates = sorted.map((b) => b.date.slice(5));
+    let running = 300;
+    const bankrollPoints = [];
+    const dailyPnL = sorted.map((b) => b.netUSD || 0);
+    for (let i = 0; i < sorted.length; i++) {
+      running += dailyPnL[i];
+      bankrollPoints.push(running);
+    }
+    if (bankrollChartInstance) bankrollChartInstance.destroy();
+    if (pnlChartInstance) pnlChartInstance.destroy();
+    const ctx1 = bankrollChartRef.current.getContext("2d");
+    bankrollChartInstance = new Chart(ctx1, {
+      type: "line",
+      data: {
+        labels: dates,
+        datasets: [{
+          label: "Bankroll (USD)",
+          data: bankrollPoints,
+          borderColor: T.gold,
+          backgroundColor: "rgba(201,146,42,0.05)",
+          borderWidth: 2,
+          fill: true,
+          tension: 0.2,
+          pointRadius: 3,
+          pointBackgroundColor: T.gold,
+        }],
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+          legend: { labels: { color: T.text } },
+          tooltip: { callbacks: { label: (ctx) => `$${ctx.raw.toFixed(2)}` } },
+        },
+        scales: {
+          x: { ticks: { color: T.muted }, grid: { color: T.border } },
+          y: { ticks: { color: T.muted }, grid: { color: T.border } },
+        },
+      },
+    });
+    const ctx2 = pnlChartRef.current.getContext("2d");
+    pnlChartInstance = new Chart(ctx2, {
+      type: "bar",
+      data: {
+        labels: dates,
+        datasets: [{
+          label: "Daily P&L (USD)",
+          data: dailyPnL,
+          backgroundColor: dailyPnL.map((p) => (p >= 0 ? T.green : T.red)),
+          borderRadius: 4,
+        }],
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+          legend: { labels: { color: T.text } },
+          tooltip: { callbacks: { label: (ctx) => `$${ctx.raw.toFixed(2)}` } },
+        },
+        scales: {
+          x: { ticks: { color: T.muted }, grid: { color: T.border } },
+          y: { ticks: { color: T.muted }, grid: { color: T.border } },
+        },
+      },
+    });
+  };
+
+  const fmt = (v) =>
+    zmw ? `K${(v * ZMW).toLocaleString("en", { maximumFractionDigits: 0 })}` : `$${Math.abs(v).toLocaleString("en", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
+  if (!loaded)
+    return (
+      <div
+        style={{
+          background: T.bg,
+          height: "100vh",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          flexDirection: "column",
+          gap: 16,
+        }}
+      >
+        <div style={{ animation: "goldpulse 2s ease-in-out infinite" }}>
+          <Mark size={60} />
+        </div>
+        <div style={{ color: T.gold, fontFamily: "monospace", fontSize: 11, letterSpacing: "0.25em" }}>INITIALIZING...</div>
+        <div style={{ color: T.muted, fontFamily: "monospace", fontSize: 9, letterSpacing: "0.15em" }}>V3 PRODUCTION · 4.5/5 RATED</div>
+      </div>
+    );
+
+  if (!ob) return <Onboard val={obv} setVal={setObv} onDone={() => { setBankroll(parseFloat(obv) || 300); setOb(true); }} />;
+
+  const nav = [
+    { id: "home", icon: "home", label: "Base" },
+    { id: "filter", icon: "filter", label: "Scout" },
+    { id: "bets", icon: "trophy", label: "Ops" },
+    { id: "report", icon: "report", label: "Intel" },
+    { id: "ghost", icon: "brain", label: "Ghost" },
+  ];
+
+  return (
+    <div style={{ background: T.bg, minHeight: "100vh", paddingBottom: 80 }}>
+      <div
+        style={{
+          position: "sticky",
+          top: 0,
+          zIndex: 10,
+          background: T.bg,
+          borderBottom: `1px solid ${T.border}`,
+          padding: "12px 16px",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          backdropFilter: "blur(12px)",
+        }}
+      >
+        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+          <Mark size={32} />
+          <div>
+            <div style={{ fontWeight: 600, fontSize: 12, color: T.heading }}>TiDyn</div>
+            <div style={{ fontSize: 9, color: T.muted, letterSpacing: "0.12em" }}>V3 · PRODUCTION</div>
+          </div>
+        </div>
+        <div
+          style={{
+            background: T.surface2,
+            padding: "4px 12px",
+            borderRadius: 40,
+            cursor: "pointer",
+            border: `1px solid ${T.border2}`,
+          }}
+          onClick={() => setZmw(!zmw)}
+        >
+          <span style={{ color: T.muted, fontSize: 11, fontFamily: "monospace" }}>{zmw ? "ZMW" : "USD"}</span>
+        </div>
+      </div>
+
+      <div
+        style={{
+          display: "flex",
+          gap: 4,
+          padding: "12px 16px",
+          background: T.surface,
+          borderBottom: `1px solid ${T.border}`,
+          marginBottom: 16,
+        }}
+      >
+        {nav.map((item) => (
+          <button
+            key={item.id}
+            onClick={() => setTab(item.id)}
+            style={{
+              flex: 1,
+              background: tab === item.id ? T.surface3 : "transparent",
+              border: "none",
+              borderRadius: 40,
+              padding: "8px 12px",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: 8,
+              cursor: "pointer",
+              transition: "all 0.2s",
+              color: tab === item.id ? T.gold : T.muted,
+            }}
+          >
+            <I n={item.icon} s={18} c={tab === item.id ? T.gold : T.muted} />
+            <span style={{ fontSize: 11, fontWeight: 500 }}>{item.label}</span>
+          </button>
+        ))}
+      </div>
+
+      <div style={{ padding: "0 16px 24px" }}>
+        {tab === "home" && (
+          <div>
+            <div style={{ background: T.surface, borderRadius: 20, padding: 20, border: `1px solid ${T.border2}`, marginBottom: 16 }}>
+              <SLabel>BANKROLL</SLabel>
+              <div style={{ fontSize: 32, fontWeight: 700, fontFamily: "monospace", color: T.heading }}>{fmt(bankroll)}</div>
+              <div style={{ fontSize: 12, color: T.muted, marginTop: 4 }}>Active bankroll · Kelly base 2.78%</div>
+              <div style={{ marginTop: 16 }}>
+                <ConfBar score={Math.min(100, Math.round((bankroll / 1000) * 100))} label="KELLY READINESS" color={T.blue} />
+              </div>
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+              <div style={{ background: T.surface2, borderRadius: 16, padding: 16 }}>
+                <div style={{ fontSize: 11, color: T.muted }}>Total Bets</div>
+                <div style={{ fontSize: 24, fontWeight: 700, color: T.heading }}>{bets.length}</div>
+              </div>
+              <div style={{ background: T.surface2, borderRadius: 16, padding: 16 }}>
+                <div style={{ fontSize: 11, color: T.muted }}>Total P&L</div>
+                <div style={{ fontSize: 24, fontWeight: 700, color: bets.reduce((s, b) => s + (b.netUSD || 0), 0) >= 0 ? T.green : T.red }}>
+                  {fmt(bets.reduce((s, b) => s + (b.netUSD || 0), 0))}
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {tab === "filter" && (
+          <div style={{ background: T.surface, borderRadius: 20, padding: 20, border: `1px solid ${T.border2}` }}>
+            <SLabel>QUICK MATCH FILTER</SLabel>
+            <div style={{ marginBottom: 16 }}>
+              <div style={{ fontSize: 12, color: T.muted, marginBottom: 8 }}>Use this space to run Ghost AI quick‑scan. Provide teams & odds.</div>
+              <textarea
+                rows={4}
+                placeholder='Example: QUICK: Favorite: Bayern Munich, Underdog: Hoffenheim, Competition: Bundesliga, AH odds: 2.20, BTTS odds: 2.05, Bankroll: 2000'
+                style={{ width: "100%", background: T.surface2, border: `1px solid ${T.border2}`, borderRadius: 12, padding: 12, color: T.text, fontSize: 12 }}
+              />
+            </div>
+          </div>
+        )}
+      {tab === "bets" && (
+          <div style={{ background: T.surface, borderRadius: 20, padding: 20, border: `1px solid ${T.border2}` }}>
+            <SLabel>BET LOG</SLabel>
+            {bets.length === 0 ? (
+              <div style={{ color: T.muted, textAlign: "center", padding: 32 }}>No bets recorded yet</div>
+            ) : (
+              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                {bets.slice().reverse().map((b, idx) => (
+                  <div key={idx} style={{ background: T.surface3, borderRadius: 12, padding: 12, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                    <div>
+                      <div style={{ fontSize: 11, color: T.muted }}>{b.date}</div>
+                      <div style={{ fontSize: 13, color: T.text }}>{b.match || "Match"}</div>
+                    </div>
+                    <div style={{ fontWeight: 700, color: b.netUSD >= 0 ? T.green : T.red }}>{fmt(b.netUSD)}</div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {tab === "report" && (
+          <div>
+            <div style={{ background: T.surface, borderRadius: 20, padding: 20, border: `1px solid ${T.border2}`, marginBottom: 16 }}>
+              <SLabel>PERFORMANCE OVERVIEW</SLabel>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 24 }}>
+                <div>
+                  <div style={{ fontSize: 10, color: T.muted }}>Win Rate (sessions)</div>
+                  <div style={{ fontSize: 24, fontWeight: 700, color: T.heading }}>
+                    {bets.length ? `${Math.round((bets.filter(b => b.netUSD > 0).length / bets.length) * 100)}%` : "—"}
+                  </div>
+                </div>
+                <div>
+                  <div style={{ fontSize: 10, color: T.muted }}>Avg P&L</div>
+                  <div style={{ fontSize: 24, fontWeight: 700, color: bets.length ? (bets.reduce((s, b) => s + b.netUSD, 0) / bets.length >= 0 ? T.green : T.red) : T.muted }}>
+                    {bets.length ? fmt(bets.reduce((s, b) => s + b.netUSD, 0) / bets.length) : "—"}
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div style={{ background: T.surface, borderRadius: 20, padding: 20, border: `1px solid ${T.border2}`, marginBottom: 16 }}>
+              <SLabel>BANKROLL GROWTH</SLabel>
+              <div style={{ height: 240 }}>
+                <canvas ref={bankrollChartRef} />
+              </div>
+            </div>
+            <div style={{ background: T.surface, borderRadius: 20, padding: 20, border: `1px solid ${T.border2}` }}>
+              <SLabel>DAILY P&L (USD)</SLabel>
+              <div style={{ height: 200 }}>
+                <canvas ref={pnlChartRef} />
+              </div>
+            </div>
+          </div>
+        )}
+
+        {tab === "ghost" && (
+          <div style={{ background: T.surface, borderRadius: 20, padding: 20, border: `1px solid ${T.border2}` }}>
+            <SLabel>GHOST AI CONSOLE</SLabel>
+            <div style={{ height: 300, overflowY: "auto", marginBottom: 16, background: T.surface2, borderRadius: 12, padding: 12, fontFamily: "monospace", fontSize: 12 }}>
+              {chat.map((msg, i) => (
+                <div key={i} style={{ marginBottom: 12, borderBottom: `1px solid ${T.border}`, paddingBottom: 8 }}>
+                  <div style={{ color: msg.role === "user" ? T.blue : T.gold, fontWeight: 600 }}>{msg.role === "user" ? "Operator" : "Ghost"}</div>
+                  <div style={{ color: T.text, whiteSpace: "pre-wrap" }}>{msg.content}</div>
+                </div>
+              ))}
+            </div>
+            <div style={{ display: "flex", gap: 8 }}>
+              <input
+                type="text"
+                placeholder="Ask Ghost AI..."
+                style={{ flex: 1, background: T.surface3, border: `1px solid ${T.border2}`, borderRadius: 40, padding: "10px 16px", color: T.text }}
+                onKeyDown={async (e) => {
+                  if (e.key === "Enter") {
+                    const q = e.target.value;
+                    if (!q) return;
+                    setChat(prev => [...prev, { role: "user", content: q }]);
+                    e.target.value = "";
+                    const response = await askGhost([{ role: "user", content: q }], false);
+                    setChat(prev => [...prev, { role: "assistant", content: response }]);
+                  }
+                }}
+              />
+              <button
+                style={{ background: T.goldDim, border: "none", borderRadius: 40, width: 44, cursor: "pointer" }}
+                onClick={async () => {
+                  const input = document.querySelector('input[placeholder="Ask Ghost AI..."]');
+                  if (!input.value) return;
+                  const q = input.value;
+                  setChat(prev => [...prev, { role: "user", content: q }]);
+                  input.value = "";
+                  const response = await askGhost([{ role: "user", content: q }], false);
+                  setChat(prev => [...prev, { role: "assistant", content: response }]);
+                }}
+              >
+                <I n="send" s={20} c={T.bg} />
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+
+      <Wave style={{ position: "fixed", bottom: 0, left: 0, right: 0, opacity: 0.3 }} />
+    </div>
+  );
+}
+```
